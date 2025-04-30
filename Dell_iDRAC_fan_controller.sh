@@ -6,6 +6,24 @@
 
 source functions.sh
 
+# Function to get GPU temperature from web service
+get_gpu_temperature() {
+    local gpu_temp
+    gpu_temp=$(curl -s "${GPU_TEMP_URL}" | grep -o '"temperature":[0-9]*' | cut -d':' -f2)
+    if [ -n "$gpu_temp" ]; then
+        echo "$gpu_temp"
+    else
+        echo "0"
+    fi
+}
+
+# Function to check if GPU is overheating
+GPU_OVERHEATING() {
+    local gpu_temp
+    gpu_temp=$(get_gpu_temperature)
+    [ "$gpu_temp" -gt "$GPU_TEMPERATURE_THRESHOLD" ]
+}
+
 # Trap the signals for container exit and run graceful_exit function
 trap 'graceful_exit' SIGINT SIGQUIT SIGTERM
 
@@ -59,6 +77,7 @@ echo "iDRAC/IPMI host: $IDRAC_HOST"
 # Log the fan speed objective, CPU temperature threshold and check interval
 echo "Fan speed objective: $DECIMAL_FAN_SPEED%"
 echo "CPU temperature threshold: $CPU_TEMPERATURE_THRESHOLD°C"
+echo "GPU temperature threshold: $GPU_TEMPERATURE_THRESHOLD°C"
 echo "Check interval: ${CHECK_INTERVAL}s"
 echo ""
 
@@ -92,10 +111,11 @@ while true; do
   SLEEP_PROCESS_PID=$!
 
   retrieve_temperatures $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
+  GPU_TEMPERATURE=$(get_gpu_temperature)
 
   # Initialize a variable to store the comments displayed when the fan control profile changed
   COMMENT=" -"
-  # Check if CPU 1 is overheating then apply Dell default dynamic fan control profile if true
+  # Check if any temperature threshold is exceeded
   if CPU1_OVERHEATING; then
     apply_Dell_fan_control_profile
 
@@ -118,13 +138,19 @@ while true; do
       IS_DELL_FAN_CONTROL_PROFILE_APPLIED=true
       COMMENT="CPU 2 temperature is too high, Dell default dynamic fan control profile applied for safety"
     fi
+  elif GPU_OVERHEATING; then
+    apply_Dell_fan_control_profile
+    if ! $IS_DELL_FAN_CONTROL_PROFILE_APPLIED; then
+      IS_DELL_FAN_CONTROL_PROFILE_APPLIED=true
+      COMMENT="GPU temperature is too high (${GPU_TEMPERATURE}°C), Dell default dynamic fan control profile applied for safety"
+    fi
   else
     apply_user_fan_control_profile
 
     # Check if user fan control profile is applied then apply it if not
     if $IS_DELL_FAN_CONTROL_PROFILE_APPLIED; then
       IS_DELL_FAN_CONTROL_PROFILE_APPLIED=false
-      COMMENT="CPU temperature decreased and is now OK (<= $CPU_TEMPERATURE_THRESHOLD°C), user's fan control profile applied."
+      COMMENT="All temperatures are OK (CPU <= ${CPU_TEMPERATURE_THRESHOLD}°C, GPU <= ${GPU_TEMPERATURE_THRESHOLD}°C), user's fan control profile applied."
     fi
   fi
 
@@ -144,10 +170,10 @@ while true; do
   # Print temperatures, active fan control profile and comment if any change happened during last time interval
   if [ $i -eq $TABLE_HEADER_PRINT_INTERVAL ]; then
     echo "                     ------- Temperatures -------"
-    echo "    Date & time      Inlet  CPU 1  CPU 2  Exhaust          Active fan speed profile          Third-party PCIe card Dell default cooling response  Comment"
+    echo "    Date & time      Inlet  CPU 1  CPU 2  Exhaust  GPU           Active fan speed profile          Third-party PCIe card Dell default cooling response  Comment"
     i=0
   fi
-  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %40s  %51s  %s\n" "$(date +"%d-%m-%Y %T")" $INLET_TEMPERATURE $CPU1_TEMPERATURE "$CPU2_TEMPERATURE" "$EXHAUST_TEMPERATURE" "$CURRENT_FAN_CONTROL_PROFILE" "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" "$COMMENT"
+  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %3d°C  %40s  %51s  %s\n" "$(date +"%d-%m-%Y %T")" $INLET_TEMPERATURE $CPU1_TEMPERATURE "$CPU2_TEMPERATURE" "$EXHAUST_TEMPERATURE" "$GPU_TEMPERATURE" "$CURRENT_FAN_CONTROL_PROFILE" "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" "$COMMENT"
   ((i++))
   wait $SLEEP_PROCESS_PID
 done

@@ -4,7 +4,7 @@ LABEL org.opencontainers.image.authors="tigerblue77"
 
 RUN apt-get update
 
-RUN apt-get install ipmitool -y
+RUN apt-get install ipmitool curl -y
 
 ADD functions.sh /app/functions.sh
 ADD healthcheck.sh /app/healthcheck.sh
@@ -23,8 +23,10 @@ ENV IDRAC_HOST local
 # ENV IDRAC_PASSWORD calvin
 ENV FAN_SPEED 5
 ENV CPU_TEMPERATURE_THRESHOLD 50
-ENV CHECK_INTERVAL 60
-ENV DISABLE_THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE false
+ENV GPU_TEMPERATURE_THRESHOLD 80
+ENV CHECK_INTERVAL 20
+ENV DISABLE_THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE true
 ENV KEEP_THIRD_PARTY_PCIE_CARD_COOLING_RESPONSE_STATE_ON_EXIT false
-
+# Add this line with the other ENV variables
+ENV GPU_TEMP_URL http://192.168.50.22:680
 ENTRYPOINT ["./Dell_iDRAC_fan_controller.sh"]
