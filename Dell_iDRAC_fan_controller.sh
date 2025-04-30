@@ -119,6 +119,7 @@ echo "GPU temperature threshold: $GPU_TEMPERATURE_THRESHOLD°C"
 echo "Check interval: ${CHECK_INTERVAL}s"
 echo ""
 
+
 # Define the interval for printing
 readonly TABLE_HEADER_PRINT_INTERVAL=10
 i=$TABLE_HEADER_PRINT_INTERVAL
