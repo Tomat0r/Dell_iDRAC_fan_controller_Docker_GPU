@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 # Enable strict bash mode to stop the script if an uninitialized variable is used, if a command fails, or if a command with a pipe fails
@@ -6,22 +7,54 @@
 
 source functions.sh
 
-# Function to get GPU temperature from web service
-get_gpu_temperature() {
-    local gpu_temp
-    gpu_temp=$(curl -s "${GPU_TEMP_URL}" | grep -o '"temperature":[0-9]*' | cut -d':' -f2)
-    if [ -n "$gpu_temp" ]; then
-        echo "$gpu_temp"
-    else
-        echo "0"
-    fi
+# Function to get GPU temperature and details from web service
+get_gpu_info() {
+    curl -s "${GPU_TEMP_URL}"
 }
 
-# Function to check if GPU is overheating
+# Function to get all GPU temperatures as an array
+get_gpu_temperatures() {
+    local gpu_info
+    gpu_info=$(get_gpu_info)
+    if [[ $gpu_info == *"error"* ]]; then
+        echo "0"
+        return
+    fi
+    echo "$gpu_info" | jq -r '.[].temperature'
+}
+
+# Function to get GPU names
+get_gpu_names() {
+    local gpu_info
+    gpu_info=$(get_gpu_info)
+    if [[ $gpu_info == *"error"* ]]; then
+        echo "Unknown GPU"
+        return
+    fi
+    echo "$gpu_info" | jq -r '.[].name'
+}
+
+# Function to format GPU info for display
+format_gpu_info() {
+    local gpu_info
+    gpu_info=$(get_gpu_info)
+    if [[ $gpu_info == *"error"* ]]; then
+        echo "No GPU data"
+        return
+    fi
+    echo "$gpu_info" | jq -r '.[] | "\(.name)[\(.index)]: \(.temperature)°C"' | paste -sd ", " -
+}
+
+# Function to check if any GPU is overheating
 GPU_OVERHEATING() {
-    local gpu_temp
-    gpu_temp=$(get_gpu_temperature)
-    [ "$gpu_temp" -gt "$GPU_TEMPERATURE_THRESHOLD" ]
+    local temps
+    temps=($(get_gpu_temperatures))
+    for temp in "${temps[@]}"; do
+        if [ "$temp" -gt "$GPU_TEMPERATURE_THRESHOLD" ]; then
+            return 0  # true in bash
+        fi
+    done
+    return 1  # false in bash
 }
 
 # Trap the signals for container exit and run graceful_exit function
@@ -70,9 +103,14 @@ else
   readonly CPU2_TEMPERATURE_INDEX=2
 fi
 
+# Get initial GPU information
+GPU_INFO=$(format_gpu_info)
+
 # Log main informations
 echo "Server model: $SERVER_MANUFACTURER $SERVER_MODEL"
 echo "iDRAC/IPMI host: $IDRAC_HOST"
+echo "Detected GPUs: $GPU_INFO"
+echo "GPU Temperature URL: $GPU_TEMP_URL"
 
 # Log the fan speed objective, CPU temperature threshold and check interval
 echo "Fan speed objective: $DECIMAL_FAN_SPEED%"
@@ -111,7 +149,7 @@ while true; do
   SLEEP_PROCESS_PID=$!
 
   retrieve_temperatures $IS_EXHAUST_TEMPERATURE_SENSOR_PRESENT $IS_CPU2_TEMPERATURE_SENSOR_PRESENT
-  GPU_TEMPERATURE=$(get_gpu_temperature)
+  GPU_INFO=$(format_gpu_info)
 
   # Initialize a variable to store the comments displayed when the fan control profile changed
   COMMENT=" -"
@@ -142,7 +180,7 @@ while true; do
     apply_Dell_fan_control_profile
     if ! $IS_DELL_FAN_CONTROL_PROFILE_APPLIED; then
       IS_DELL_FAN_CONTROL_PROFILE_APPLIED=true
-      COMMENT="GPU temperature is too high (${GPU_TEMPERATURE}°C), Dell default dynamic fan control profile applied for safety"
+      COMMENT="GPU temperature(s) too high ($GPU_INFO), Dell default dynamic fan control profile applied for safety"
     fi
   else
     apply_user_fan_control_profile
@@ -170,10 +208,19 @@ while true; do
   # Print temperatures, active fan control profile and comment if any change happened during last time interval
   if [ $i -eq $TABLE_HEADER_PRINT_INTERVAL ]; then
     echo "                     ------- Temperatures -------"
-    echo "    Date & time      Inlet  CPU 1  CPU 2  Exhaust  GPU           Active fan speed profile          Third-party PCIe card Dell default cooling response  Comment"
+    echo "    Date & time      Inlet  CPU 1  CPU 2  Exhaust  GPUs                                     Active fan speed profile          Third-party PCIe card Dell default cooling response  Comment"
     i=0
   fi
-  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %3d°C  %40s  %51s  %s\n" "$(date +"%d-%m-%Y %T")" $INLET_TEMPERATURE $CPU1_TEMPERATURE "$CPU2_TEMPERATURE" "$EXHAUST_TEMPERATURE" "$GPU_TEMPERATURE" "$CURRENT_FAN_CONTROL_PROFILE" "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" "$COMMENT"
+  printf "%19s  %3d°C  %3d°C  %3s°C  %5s°C  %-40s  %40s  %51s  %s\n" \
+    "$(date +"%d-%m-%Y %T")" \
+    $INLET_TEMPERATURE \
+    $CPU1_TEMPERATURE \
+    "$CPU2_TEMPERATURE" \
+    "$EXHAUST_TEMPERATURE" \
+    "$GPU_INFO" \
+    "$CURRENT_FAN_CONTROL_PROFILE" \
+    "$THIRD_PARTY_PCIE_CARD_DELL_DEFAULT_COOLING_RESPONSE_STATUS" \
+    "$COMMENT"
   ((i++))
   wait $SLEEP_PROCESS_PID
 done

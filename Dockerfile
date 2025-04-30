@@ -4,7 +4,7 @@ LABEL org.opencontainers.image.authors="tigerblue77"
 
 RUN apt-get update
 
-RUN apt-get install ipmitool curl -y
+RUN apt-get install ipmitool curl jq -y
 
 ADD functions.sh /app/functions.sh
 ADD healthcheck.sh /app/healthcheck.sh
